@@ -20,6 +20,21 @@ public class Transaction {
     private STATUS status;
     private String walletTransactionId;
 
+    // 1.将new 更改为 依赖注入的方式，方便测试，也是面向接口编程的思想
+    private WalletRpcService walletRpcService;
+
+    public void setWalletRpcService(WalletRpcService walletRpcService) {
+        this.walletRpcService = walletRpcService;
+    }
+
+    // 2.将 RedisDistributeLock 的引用，更改为包装类，并使用依赖注入的方式实现
+    // 如果 RedisDistributeLock是自己项目的类则可以直接修改为依赖注入并mock的方式。如果是第三方，则需要使用包装类，然后依赖注入并mock。
+    private TransactionLock transactionLock;
+
+    public void setTransactionLock(TransactionLock transactionLock) {
+        this.transactionLock = transactionLock;
+    }
+
     // ...get() methods...
 
     public Transaction(String preAssignedId, Long buyerId, Long sellerId, Long productId, String orderId, Double amount) {
@@ -39,7 +54,7 @@ public class Transaction {
         this.createTimestamp = System.currentTimeMillis();
         this.amount = amount;
     }
-    
+
     /**
      * 方法作用
      *
@@ -55,17 +70,19 @@ public class Transaction {
         if (status == STATUS.EXECUTED) return true;
         boolean isLocked = false;
         try {
-            isLocked = RedisDistributedLock.getSingletonIntance().lockTransaction(id);
+//            isLocked = RedisDistributedLock.getSingletonIntance().lockTransaction(id); 2.修改为包装类的形式
+            isLocked = transactionLock.lock(id);
             if (!isLocked) {
                 return false; // 锁定未成功，返回false，job兜底执行
             }
             if (status == STATUS.EXECUTED) return true; // double check
-            long executionInvokedTimestamp = System.currentTimeMillis();
-            if (executionInvokedTimestamp - createTimestamp > 14*24*60*60*1000) {
+            // 将未决行为重新封装为函数
+//            if (executionInvokedTimestamp - createTimestamp > 14*24*60*60*1000) {
+            if (isExpired()){
                 this.status = STATUS.EXPIRED;
                 return false;
             }
-            WalletRpcService walletRpcService = new WalletRpcService();
+//            WalletRpcService walletRpcService = new WalletRpcService(); 1.更改为依赖注入的方式
             String walletTransactionId = walletRpcService.moveMoney(id, buyerId, sellerId, amount);
             if (walletTransactionId != null) {
                 this.walletTransactionId = walletTransactionId;
@@ -77,8 +94,22 @@ public class Transaction {
             }
         } finally {
             if (isLocked) {
-                RedisDistributedLock.getSingletonIntance().unlockTransaction(id);
+//                RedisDistributedLock.getSingletonIntance().unlockTransaction(id);
+                transactionLock.unlock(id);
             }
         }
+    }
+
+    public boolean isExpired() {
+        long executionInvokedTimestamp = System.currentTimeMillis();
+        return (executionInvokedTimestamp - createTimestamp > 14*24*60*60*1000);
+    }
+
+    public STATUS getStatus() {
+        return status;
+    }
+
+    public void setStatus(STATUS status) {
+        this.status = status;
     }
 }
