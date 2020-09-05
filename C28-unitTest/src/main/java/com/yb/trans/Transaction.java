@@ -99,7 +99,7 @@ public class Transaction {
             }
         }
     }
-
+    
     public boolean isExpired() {
         long executionInvokedTimestamp = System.currentTimeMillis();
         return (executionInvokedTimestamp - createTimestamp > 14*24*60*60*1000);
